@@ -49,6 +49,8 @@ parser.add_argument("--temp-directory", type=str, default=None, help="Set the Co
 parser.add_argument("--input-directory", type=str, default=None, help="Set the ComfyUI input directory. Overrides --base-directory.")
 parser.add_argument("--auto-launch", action="store_true", help="Automatically launch ComfyUI in the default browser.")
 parser.add_argument("--disable-auto-launch", action="store_true", help="Disable auto launching the browser.")
+parser.add_argument("--auto-quit-on-browser-close", action="store_true", help="Automatically quit ComfyUI when the browser connection is closed. Only works with --auto-launch.")
+parser.add_argument("--auto-quit-timeout", type=int, default=30, help="Grace period in seconds before auto-quitting after browser disconnects (default: 30).")
 parser.add_argument("--cuda-device", type=int, default=None, metavar="DEVICE_ID", help="Set the id of the cuda device this instance will use. All other devices will not be visible.")
 parser.add_argument("--default-device", type=int, default=None, metavar="DEFAULT_DEVICE_ID", help="Set the id of the default device, all other devices will stay visible.")
 cm_group = parser.add_mutually_exclusive_group()
@@ -227,6 +229,13 @@ if args.windows_standalone_build:
 
 if args.disable_auto_launch:
     args.auto_launch = False
+
+# Validate auto-quit-on-browser-close requires auto-launch
+if args.auto_quit_on_browser_close and not args.auto_launch:
+    import sys
+    import logging
+    logging.warning("WARNING: --auto-quit-on-browser-close requires --auto-launch to be enabled. Auto-quit will be disabled.")
+    args.auto_quit_on_browser_close = False
 
 if args.force_fp16:
     args.fp16_unet = True

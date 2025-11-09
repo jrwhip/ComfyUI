@@ -210,6 +210,13 @@ class PromptServer():
 
         self.on_prompt_handlers = []
 
+        # Auto-quit tracking
+        self.auto_quit_enabled = args.auto_quit_on_browser_close and args.auto_launch
+        self.auto_quit_timeout = args.auto_quit_timeout
+        self.first_connection_seen = False
+        self.shutdown_requested = False
+        self.shutdown_timer_task = None
+
         @routes.get('/ws')
         async def websocket_handler(request):
             ws = web.WebSocketResponse()
@@ -225,6 +232,9 @@ class PromptServer():
             self.sockets[sid] = ws
             # Store metadata separately
             self.sockets_metadata[sid] = {"feature_flags": {}}
+
+            # Notify about new connection for auto-quit tracking
+            self._on_connection_added()
 
             try:
                 # Send initial state to the new client
@@ -268,6 +278,8 @@ class PromptServer():
             finally:
                 self.sockets.pop(sid, None)
                 self.sockets_metadata.pop(sid, None)
+                # Notify about connection removal for auto-quit tracking
+                self._on_connection_removed()
             return ws
 
         @routes.get("/")
@@ -981,6 +993,66 @@ class PromptServer():
 
     def queue_updated(self):
         self.send_sync("status", { "status": self.get_queue_info() })
+
+    def _on_connection_added(self):
+        """Called when a WebSocket connection is established"""
+        if not self.auto_quit_enabled:
+            return
+
+        # Mark that we've seen at least one connection
+        if not self.first_connection_seen:
+            self.first_connection_seen = True
+            logging.info("[Auto-Quit] First browser connection detected. Monitoring for disconnects.")
+
+        # Cancel any pending shutdown since we have an active connection
+        self._cancel_shutdown()
+
+    def _on_connection_removed(self):
+        """Called when a WebSocket connection is closed"""
+        if not self.auto_quit_enabled or not self.first_connection_seen:
+            return
+
+        # Check if there are any remaining connections
+        if len(self.sockets) == 0:
+            # No more connections, schedule shutdown after grace period
+            self._schedule_shutdown()
+
+    def _schedule_shutdown(self):
+        """Schedule a shutdown after the grace period"""
+        if self.shutdown_timer_task is not None:
+            # Already scheduled
+            return
+
+        logging.info(f"[Auto-Quit] All browser connections closed. Will auto-quit in {self.auto_quit_timeout} seconds if no new connections...")
+
+        async def shutdown_timer():
+            try:
+                await asyncio.sleep(self.auto_quit_timeout)
+                # Double-check there are still no connections
+                if len(self.sockets) == 0 and not self.shutdown_requested:
+                    logging.info("[Auto-Quit] Grace period expired with no connections. Shutting down ComfyUI...")
+                    self.request_shutdown()
+            except asyncio.CancelledError:
+                logging.info("[Auto-Quit] Shutdown cancelled - browser reconnected.")
+
+        self.shutdown_timer_task = self.loop.create_task(shutdown_timer())
+
+    def _cancel_shutdown(self):
+        """Cancel a pending shutdown"""
+        if self.shutdown_timer_task is not None:
+            self.shutdown_timer_task.cancel()
+            self.shutdown_timer_task = None
+
+    def request_shutdown(self):
+        """Request a graceful shutdown of the server"""
+        if self.shutdown_requested:
+            return
+
+        self.shutdown_requested = True
+        logging.info("[Auto-Quit] Initiating graceful shutdown...")
+
+        # Stop the event loop, which will cause the main thread to exit
+        self.loop.call_soon_threadsafe(self.loop.stop)
 
     async def publish_loop(self):
         while True:

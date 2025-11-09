@@ -369,12 +369,32 @@ if __name__ == "__main__":
     if sys.version_info.major == 3 and sys.version_info.minor < 10:
         logging.warning("WARNING: You are using a python version older than 3.10, please upgrade to a newer one. 3.12 and above is recommended.")
 
-    event_loop, _, start_all_func = start_comfyui()
+    event_loop, prompt_server, start_all_func = start_comfyui()
+
+    if args.auto_quit_on_browser_close and args.auto_launch:
+        logging.info(f"[Auto-Quit] Enabled with {args.auto_quit_timeout}s timeout after browser disconnect")
+
     try:
         x = start_all_func()
         app.logger.print_startup_warnings()
         event_loop.run_until_complete(x)
     except KeyboardInterrupt:
         logging.info("\nStopped server")
+    except RuntimeError as e:
+        # Handle auto-quit gracefully when event loop is stopped
+        if "Event loop stopped before Future completed" in str(e):
+            if hasattr(prompt_server, 'shutdown_requested') and prompt_server.shutdown_requested:
+                logging.info("[Auto-Quit] Shutdown completed successfully")
+            else:
+                # Re-raise if it's not an auto-quit shutdown
+                raise
+        else:
+            raise
+
+    # Graceful cleanup
+    if hasattr(prompt_server, 'shutdown_requested') and prompt_server.shutdown_requested:
+        logging.info("[Auto-Quit] Performing cleanup...")
+        comfy.model_management.unload_all_models()
+        comfy.model_management.soft_empty_cache()
 
     cleanup_temp()
