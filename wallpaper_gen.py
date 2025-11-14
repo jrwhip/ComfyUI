@@ -271,6 +271,7 @@ def generate_scene_with_gemini(character):
         # Run gemini from /tmp to avoid workspace detection
         # Note: Gemini CLI detects project directories and may enter interactive mode
         log(f"Calling Gemini CLI (prompt: {len(gemini_prompt)} chars)...")
+        log(f"Gemini input: {gemini_prompt}")
         start_time = time.time()
 
         result = subprocess.run(
