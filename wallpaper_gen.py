@@ -271,10 +271,12 @@ Keep the noir aesthetic with cool tones (navy blues, steel grays, pale blues) an
 Output ONLY the scene description (100-150 words), no meta-text."""
 
     try:
+        # Run gemini from a different directory to avoid workspace detection
         result = subprocess.run(
             ['gemini', '-p', gemini_prompt],
             capture_output=True,
             text=True,
+            cwd='/tmp',  # Run from /tmp to avoid comfyui directory being detected as a project
             timeout=30
         )
 
@@ -339,6 +341,9 @@ def main():
         log(f"ERROR: Workflow file not found: {WORKFLOW_PATH}")
         return 1
 
+    # Load workflow BEFORE starting ComfyUI (so Gemini can run first)
+    workflow = load_workflow()
+
     # Start ComfyUI
     comfyui_proc = start_comfyui()
 
@@ -347,9 +352,6 @@ def main():
         if not wait_for_comfyui():
             log("ERROR: ComfyUI server not available")
             return 1
-
-        # Load workflow
-        workflow = load_workflow()
 
         # Connect to WebSocket
         client_id = str(uuid.uuid4())
