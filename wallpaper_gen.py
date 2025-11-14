@@ -254,21 +254,12 @@ def generate_scene_with_gemini(character):
     else:
         footwear_instruction = f"Make her {character['footwear']} visible."
 
-    gemini_prompt = f"""Generate a varied noir city scene description for an anime wallpaper (1280x720). [Variation seed: {random_seed}]
+    # Build a concise prompt (long prompts cause gemini to timeout)
+    char_summary = f"{character['age']}, {character['hair']}, {character['eyes']}, {character['vibe']}, {character['footwear']}"
+    if 'ethnicity' in character:
+        char_summary = f"{character['ethnicity']}, " + char_summary
 
-CHARACTER (keep consistent):
-{char_desc}
-VARY these elements each time:
-- Location: rooftop, alley, street corner, fire escape, phone booth, convenience store, subway entrance, parking garage, under bridge, building entrance, etc.
-- Pose/action: walking, sitting, standing, leaning, looking up/down, hand on wall, etc.
-- Weather: rain, mist, fog, clear night, light drizzle
-- Lighting: neon signs, street lamps, car headlights, window light, moonlight
-- Atmosphere details: puddles, steam vents, graffiti, posters, shadows, reflections
-- Viewing angle: behind, side profile, distant, close-up, from above, from below
-
-Keep the noir aesthetic with cool tones (navy blues, steel grays, pale blues) and neon accents. {footwear_instruction}
-
-Output ONLY the scene description (100-150 words), no meta-text."""
+    gemini_prompt = f"""Describe a noir anime city wallpaper scene (1280x720). Character: {char_summary}. Vary location, weather, lighting, pose. Cool blue/gray tones with neon accents. Show footwear. 100-120 words."""
 
     try:
         # Run gemini from a different directory to avoid workspace detection
