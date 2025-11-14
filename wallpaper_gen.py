@@ -255,11 +255,17 @@ def generate_scene_with_gemini(character):
         pass  # Ignore if pkill fails or no processes exist
 
     # Build a concise prompt (long prompts cause gemini to timeout)
-    char_summary = f"{character['age']}, {character['hair']}, {character['eyes']}, {character['vibe']}, {character['footwear']}"
+    char_summary = f"{character['age']}, {character['hair']}, {character['eyes']}, {character['vibe']}"
     if 'ethnicity' in character:
         char_summary = f"{character['ethnicity']}, " + char_summary
 
-    gemini_prompt = f"""Describe a noir anime city wallpaper scene (1280x720). Character: {char_summary}. Vary location, weather, lighting, pose. Cool blue/gray tones with neon accents. Show footwear. 100-120 words."""
+    # Add footwear instruction conditionally
+    if character['footwear'] == 'barefoot':
+        footwear_note = "She is barefoot - show her bare feet."
+    else:
+        footwear_note = f"Show her {character['footwear']}."
+
+    gemini_prompt = f"""Describe ONE noir anime city scene. Character: {char_summary}. {footwear_note} Choose one specific location, weather, lighting, and pose. Cool blue/gray tones with neon. Single cohesive scene, 100 words."""
 
     try:
         # Run gemini from /tmp to avoid workspace detection
@@ -294,7 +300,7 @@ def generate_scene_with_gemini(character):
                 log("WARNING: Gemini returned empty output after filtering")
                 return None
 
-            log(f"Generated scene: {generated_scene[:80]}...")
+            log(f"Generated scene (full): {generated_scene}")
             return generated_scene
         else:
             log(f"ERROR: Gemini CLI failed with exit code {result.returncode}")
