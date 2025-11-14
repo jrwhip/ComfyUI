@@ -24,6 +24,7 @@ COMFYUI_SERVER = "127.0.0.1:8188"
 WALLPAPER_DIR = os.path.expanduser("~/.config/omarchy/backgrounds/comfyui")
 WALLPAPER_SYMLINK = os.path.expanduser("~/.config/omarchy/current/background")
 LOG_FILE = os.path.join(COMFYUI_DIR, "wallpaper-gen.log")
+GEMINI_TIMEOUT = 45  # Timeout in seconds for Gemini CLI calls
 
 # Artist tags to randomly select from
 ARTIST_TAGS = [
@@ -230,29 +231,28 @@ def set_wallpaper_swaybg(image_path):
     log("Restarted swaybg with new wallpaper")
 
 def generate_scene_with_gemini(character):
-    """Use Gemini CLI to generate a varied noir city scene for the character."""
+    """
+    Use Gemini CLI to generate a varied noir city scene for the character.
+
+    Args:
+        character: Dict containing character attributes (name, hair, eyes, etc.)
+
+    Returns:
+        str: Generated scene description, or None if generation fails
+
+    Note:
+        Uses simplified prompt format to avoid timeouts. Long complex prompts
+        (>1000 chars) cause Gemini CLI to hang. Current format completes in 8-20s.
+    """
     log(f"Generating scene variation with Gemini for: {character['name']}...")
 
-    # Add random seed to prevent Gemini from caching the same response
-    random_seed = random.randint(1, 999999)
-
-    # Build character description from character dict
-    char_desc = f"- {character['hair']}, {character['eyes']}\n"
-    char_desc += f"- {character['age']}, {character['build']}\n"
-    if 'ethnicity' in character:
-        char_desc += f"- {character['ethnicity']}\n"
-    char_desc += f"- {character['vibe']} vibe\n"
-    char_desc += f"- {character['footwear']}\n"
-    if 'clothing' in character:
-        char_desc += f"- {character['clothing']}\n"
-    else:
-        char_desc += "- Clothing varies (casual/street wear)\n"
-
-    # Handle footwear visibility instruction
-    if character['footwear'] == 'barefoot':
-        footwear_instruction = "Make her bare feet visible."
-    else:
-        footwear_instruction = f"Make her {character['footwear']} visible."
+    # Kill any hung gemini processes from previous failed runs
+    try:
+        subprocess.run(['pkill', '-9', '-f', 'node.*gemini'],
+                      stderr=subprocess.DEVNULL, timeout=2)
+        time.sleep(0.3)
+    except Exception:
+        pass  # Ignore if pkill fails or no processes exist
 
     # Build a concise prompt (long prompts cause gemini to timeout)
     char_summary = f"{character['age']}, {character['hair']}, {character['eyes']}, {character['vibe']}, {character['footwear']}"
@@ -262,29 +262,60 @@ def generate_scene_with_gemini(character):
     gemini_prompt = f"""Describe a noir anime city wallpaper scene (1280x720). Character: {char_summary}. Vary location, weather, lighting, pose. Cool blue/gray tones with neon accents. Show footwear. 100-120 words."""
 
     try:
-        # Run gemini from a different directory to avoid workspace detection
+        # Run gemini from /tmp to avoid workspace detection
+        # Note: Gemini CLI detects project directories and may enter interactive mode
+        log(f"Calling Gemini CLI (prompt: {len(gemini_prompt)} chars)...")
+        start_time = time.time()
+
         result = subprocess.run(
             ['gemini', '-p', gemini_prompt],
             capture_output=True,
             text=True,
-            cwd='/tmp',  # Run from /tmp to avoid comfyui directory being detected as a project
-            timeout=30
+            cwd='/tmp',
+            timeout=GEMINI_TIMEOUT,
+            env=os.environ.copy()
         )
+
+        elapsed = time.time() - start_time
+        log(f"Gemini CLI completed in {elapsed:.1f}s (exit code: {result.returncode})")
 
         if result.returncode == 0:
             generated_scene = result.stdout.strip()
-            # Remove system messages
+
+            # Remove system/status messages from output
             lines = generated_scene.split('\n')
-            scene_lines = [line for line in lines if not any(x in line.lower() for x in ['loaded', 'credentials', 'ready to assist', 'what can i do'])]
+            filter_keywords = ['loaded', 'credentials', 'ready to assist', 'what can i do',
+                             'setup complete', 'ready.', '[warn]', 'warning:', 'shell cwd']
+            scene_lines = [line for line in lines
+                          if not any(keyword in line.lower() for keyword in filter_keywords)]
             generated_scene = '\n'.join(scene_lines).strip()
+
+            if not generated_scene:
+                log("WARNING: Gemini returned empty output after filtering")
+                return None
 
             log(f"Generated scene: {generated_scene[:80]}...")
             return generated_scene
         else:
-            log(f"Gemini CLI failed: {result.stderr}")
+            log(f"ERROR: Gemini CLI failed with exit code {result.returncode}")
+            if result.stderr:
+                log(f"Gemini stderr: {result.stderr[:200]}")
             return None
+
+    except subprocess.TimeoutExpired:
+        log(f"ERROR: Gemini CLI timed out after {GEMINI_TIMEOUT} seconds")
+        # Kill the hung process
+        try:
+            subprocess.run(['pkill', '-9', '-f', 'node.*gemini'],
+                          stderr=subprocess.DEVNULL, timeout=2)
+        except Exception:
+            pass
+        return None
+    except FileNotFoundError:
+        log("ERROR: Gemini CLI not found. Is it installed and in PATH?")
+        return None
     except Exception as e:
-        log(f"Error calling Gemini: {e}")
+        log(f"ERROR: Unexpected error calling Gemini: {type(e).__name__}: {e}")
         return None
 
 def load_workflow():
@@ -314,8 +345,10 @@ def load_workflow():
         netayume_prefix = "You are an assistant designed to generate high quality anime images based on textual prompts. <Prompt Start> "
         full_prompt = netayume_prefix + artist_tag + ", " + generated_scene
         workflow["6"]["inputs"]["text"] = full_prompt
-        log("Injected dynamic scene into workflow")
+        log("Successfully injected Gemini-generated scene into workflow")
     else:
+        if not generated_scene:
+            log("WARNING: Gemini scene generation failed, falling back to default prompt")
         log("Using default prompt from workflow file")
 
     log(f"Loaded workflow with {len(workflow)} nodes")
