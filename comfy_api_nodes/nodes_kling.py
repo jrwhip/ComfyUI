@@ -49,7 +49,7 @@ from comfy_api_nodes.apis import (
     KlingCharacterEffectModelName,
     KlingSingleImageEffectModelName,
 )
-from comfy_api_nodes.apis.kling_api import (
+from comfy_api_nodes.apis.kling import (
     ImageToVideoWithAudioRequest,
     MotionControlRequest,
     OmniImageParamImage,
@@ -249,7 +249,6 @@ async def finish_omni_video_task(cls: type[IO.ComfyNode], response: TaskStatusRe
         ApiEndpoint(path=f"/proxy/kling/v1/videos/omni-video/{response.data.task_id}"),
         response_model=TaskStatusResponse,
         status_extractor=lambda r: (r.data.task_status if r.data else None),
-        max_poll_attempts=160,
     )
     return IO.NodeOutput(await download_url_to_video_output(final_response.data.task_result.videos[0].url))
 
